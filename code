@@ -1,0 +1,1260 @@
+.nolist
+.include "m8def.inc"
+.list
+
+.def reg1 = R16
+.def reg2 = R17
+.def reg3 = r18
+.def reg4 = r19
+.def reg5 = r20 
+.cseg
+.org 0x0000
+
+Reset:
+    rjmp Main
+
+.def cs = R16
+; ----------------------------------------------------
+; NOMES
+; ----------------------------------------------------
+NOMES: .db "Luis Leca Marcelo Leite",0, 0
+
+; ---------------------------------------------------
+; rotina que realiza um atraso de cs 1/100 de segundo
+; ---------------------------------------------------
+delay_05s:
+ldi r16, 50
+delay2:
+    ldi  R17, $C3 ; $C3 = 0xC3 = 195
+delay0:
+        ldi  R18, $FB ; 251
+delay1:
+            dec  R18
+            brne delay1
+        dec  R17
+        brne delay0
+    dec cs
+    brne delay2
+    ret
+;----------------------------------------
+; Rotina que Troca LED
+;----------------------------------------
+
+Trocas : 
+in reg1, PORTB
+    ldi reg2, (1<<PB0)
+    eor reg1, reg2
+    out PORTB, reg1 ; troca LED
+ret
+
+;----------------------------
+;R232_CONFIG
+;----------------------------
+R232_CONFIG:
+ldi  r16, $17 ;
+ldi r17, $00 ;
+; Set baud rate
+out UBRRH, r17
+out UBRRL, r16
+; Enable receiver and transmitter
+ldi r16, (1<<RXEN)|(1<<TXEN)
+out UCSRB,r16
+; N  disabled parity
+out UPM0, r17
+out UPM1, r17
+;1 stop bit
+; Set frame format: 8data, 1stop bit
+ldi r16, (1<<URSEL)|(0<<USBS)|(3<<UCSZ0)
+out UCSRC,r16
+
+ret
+
+;----------------------------
+;SEND_CHAR
+;---------------------------- 
+SEND_CHAR:
+; Wait for empty transmit buffer
+sbis UCSRA,UDRE
+rjmp SEND_CHAR
+; Put data (r16) into buffer, sends the data
+out UDR, r16
+ret
+
+;----------------------------------------------------
+;PRINT_STR
+;----------------------------------------------------
+LER_STR:
+ldi r31, high(2*NOMES)
+ldi r30, low (2*NOMES)
+rcall PRINT_STR
+PRINT_STR:
+lpm r16, Z+
+rcall SEND_CHAR
+cpi r16, 0
+brne PRINT_STR
+ret
+;----------------------------------------------------
+;PRINT_DEC (8 bits)
+;----------------------------------------------------
+PRINT_DEC:
+push r16
+push r17
+push r18
+push r19
+push r20
+;gravar registos 
+mov r19, r16 ; para usar R16 na função send_char
+clr r20
+ldi r18, -1 + '0'
+bib1: inc r18
+subi r19, 100
+brcc bib1
+cpi r18, '0'
+breq dezenas
+inc r20
+mov r16, r18
+rcall SEND_CHAR
+
+dezenas:ldi r17, 10 + '0'
+bib2: dec r17
+subi r19, -10
+brcs bib2
+cpi r20, 0
+brne dezund
+cpi r17, '0'
+breq unidades
+dezund: mov r16, r17
+rcall SEND_CHAR
+unidades:
+subi r19, -'0'
+mov r16, r19
+rcall   SEND_CHAR
+
+pop r16
+pop r17
+pop r18
+pop r19
+pop r20
+ret
+;----------------------------------------------------
+Paragrafo:
+ldi reg1, 10  ; faz parágrafo
+rcall SEND_CHAR
+ldi reg1, 13
+rcall SEND_CHAR
+ret
+
+Espaco: 
+ldi r16, ' '
+rcall SEND_CHAR
+ret
+; ---------------------------------------------------
+; PRINT_HEX
+; ---------------------------------------------------
+PRINT_HEX:
+push r16
+push r19
+push r20
+push r21
+push r30
+push r31
+mov r30,R16
+mov r31,R30
+ldi r20,'0'
+ldi r21,'A'
+clr r19 
+
+hex1:
+swap r31
+andi r31,0x0F
+rjmp hex3
+hex2:
+mov r31,r30
+andi r31,0x0F
+ldi r19,1 ;controla se já enviou mais significativo
+hex3:
+cpi r31,10 ;se num > 10 enviar letra
+brlt num
+letra:
+subi r31,10
+add r31,r21 
+rjmp enviar
+
+num:
+cpi r19,1
+breq hex4
+cpi r31,0
+breq hex5 ;se  mais significativo >0 envia os 2
+hex4:
+add r31,R20
+enviar:
+mov r16,R31 
+rcall SEND_CHAR
+hex5: 
+cpi r19,1
+brne hex2
+
+pop r31
+pop r30
+pop r21
+pop r20
+pop r19
+pop r16
+ret
+; ---------------------------------------------------
+; PRINT_BIN (8 bits)
+; ---------------------------------------------------
+PRINT_BIN:
+ldi r18, 8
+mov r19,r16
+loop_bin:
+rol r19 ; põe no carry o bit mais significativo
+    brcs bit1 ;se for 1, salta
+    
+ldi r16,'0'
+rjmp final
+   
+bit1:
+ldi r16, '1'
+rjmp final
+final:  
+rcall SEND_CHAR
+DEC r18;conta o nr de bits que já enviou
+cpi r18, 0
+brne loop_bin ; se ainda não enviou todos, envia mais 1
+ret
+; ---------------------------------------------------
+; rotina principal do programa
+; ---------------------------------------------------
+Main:
+; inicializações
+    ldi reg1, low(RAMEND)
+    out SPL, reg1
+    ldi reg1, high(RAMEND)
+    out SPH, reg1
+
+    sbi DDRB, PB0  ; PB0 output (LED)
+    sbi PORTB, PB0 ; LED off
+; ciclo infinito
+rcall R232_CONFIG
+rcall paragrafo
+rcall LER_STR
+rcall paragrafo
+ldi r16, 0
+mov r25, r16
+Loop:
+rcall delay_05s
+rcall Trocas
+mov r16, r25
+rcall PRINT_HEX
+rcall Espaco
+mov r16, r25
+rcall PRINT_DEC
+rcall Espaco
+mov r16, r25
+rcall PRINT_BIN
+rcall Paragrafo
+inc r25
+rjmp Loop
+
+#######
+
+.nolist
+.include "m8def.inc"
+.list
+
+.def reg1 = R16
+.def reg2 = R17
+.def reg3 = r18
+.def reg4 = r19
+.def reg5 = r20
+.cseg
+.org 0x0000
+
+Reset:
+    rjmp Main
+
+.def cs = R16
+; ----------------------------------------------------
+; NOMES
+; ----------------------------------------------------
+NOMES: .db "Luis Leca Marcelo Leite",0, 0
+
+; ---------------------------------------------------
+; rotina que realiza um atraso de cs 1/100 de segundo
+; ---------------------------------------------------
+delay_cs:
+    ldi  R17, $C3 ; $C3 = 0xC3 = 195
+delay0:
+        ldi  R18, $FB ; 251
+delay1:
+            dec  R18
+            brne delay1
+        dec  R17
+        brne delay0
+    dec cs
+    brne delay_cs
+    ret
+
+;----------------------------------------
+; Rotina que Troca LED
+;----------------------------------------
+
+Trocas :
+in reg1, PORTB
+    ldi reg2, (1<<PB0)
+    eor reg1, reg2
+    out PORTB, reg1 ; troca LED
+ret
+
+;----------------------------
+;R232_CONFIG
+;----------------------------
+R232_CONFIG:
+ldi  r16, $17 ;
+ldi r17, $00 ;
+; Set baud rate
+out UBRRH, r17
+out UBRRL, r16
+; Enable receiver and transmitter
+ldi r16, (1<<RXEN)|(1<<TXEN)
+out UCSRB,r16
+; N  disabled parity
+out UPM0, r17
+out UPM1, r17
+;1 stop bit
+; Set frame format: 8data, 1stop bit
+ldi r16, (1<<URSEL)|(0<<USBS)|(3<<UCSZ0)
+out UCSRC,r16
+
+ret
+
+;----------------------------
+;SEND_CHAR
+;----------------------------
+SEND_CHAR:
+; Wait for empty transmit buffer
+sbis UCSRA,UDRE
+rjmp SEND_CHAR
+; Put data (r16) into buffer, sends the data
+out UDR, r16
+ret
+
+;----------------------------------------------------
+;PRINT_STR
+;----------------------------------------------------
+LER_STR:
+ldi r31, high(2*NOMES)
+ldi r30, low (2*NOMES)
+rcall PRINT_STR
+PRINT_STR:
+lpm r16, Z+
+rcall SEND_CHAR
+cpi r16, 0
+brne PRINT_STR
+ret
+;----------------------------------------------------
+;PRINT_DEC16 (16 bits)
+;----------------------------------------------------
+PRINT_DEC16:
+        ldi     reg5, -1 + '0'
+_bib1:  inc     reg5
+        subi    r26, low(10000)
+        sbci    r27, high(10000)
+        brcc    _bib1
+mov r16, reg5
+rcall SEND_CHAR
+
+        ldi     reg4, 10 + '0'
+_bib2:  dec     reg4
+        subi    r26, low(-1000)
+        sbci    r27, high(-1000)
+        brcs    _bib2
+mov r16, reg4
+rcall SEND_CHAR
+
+        ldi     reg3, -1 + '0'
+_bib3:  inc     reg3
+        subi    r26, low(100)
+        sbci    r27, high(100)
+        brcc    _bib3
+mov r16, reg3
+rcall SEND_CHAR
+
+        ldi     r27, 10 + '0'
+_bib4:  dec     r27
+        subi    r26, -10
+        brcs    _bib4
+mov r16, r27
+rcall SEND_CHAR
+
+        subi    r26, -'0'
+mov r16, r26
+rcall SEND_CHAR
+        ret
+;----------------------------------------------------
+;PRINT_DEC (8 bits)
+;----------------------------------------------------
+PRINT_DEC:
+push r16
+push r17
+push r18
+push r19
+push r20
+;gravar registos
+
+mov r19, r16 ; para usar R16 na função send_char
+clr r20
+ldi r18, -1 + '0'
+bib1: inc r18
+subi r19, 100
+brcc bib1
+cpi r18, '0'
+breq dezenas
+inc r20
+mov r16, r18
+rcall SEND_CHAR
+
+dezenas:ldi r17, 10 + '0'
+bib2: dec r17
+subi r19, -10
+brcs bib2
+cpi r20, 0
+brne dezund
+cpi r17, '0'
+breq unidades
+dezund: mov r16, r17
+rcall SEND_CHAR
+unidades:
+subi r19, -'0'
+mov r16, r19
+rcall   SEND_CHAR
+
+pop r16
+pop r17
+pop r18
+pop r19
+pop r20
+ret
+;----------------------------------------------------
+Paragrafo:
+ldi reg1, 10  ; faz parágrafo
+rcall SEND_CHAR
+ldi reg1, 13
+rcall SEND_CHAR
+ret
+;----------------------------------------------------
+Espaco:
+ldi r16, 32
+rcall SEND_CHAR
+ret
+; ---------------------------------------------------
+; PRINT_HEX16
+; ---------------------------------------------------
+PRINT_HEX16:
+
+mov r16, r27
+rcall PRINT_HEX
+mov r16, r26
+rcall PRINT_HEX
+
+ret
+
+
+
+
+; ---------------------------------------------------
+; PRINT_HEX
+; ---------------------------------------------------
+PRINT_HEX:
+push r16
+push r19
+push r20
+push r21
+push r30
+push r31
+
+mov r30,R16
+mov r31,R30
+ldi r20,'0'
+ldi r21,'A'
+clr r19
+
+hex1:
+swap r31
+andi r31,0x0F
+rjmp hex3
+hex2:
+mov r31,r30
+andi r31,0x0F
+ldi r19,1 ;controla se já enviou mais significativo
+
+hex3:
+cpi r31,10 ;se num > 10 enviar letra
+brlt num
+letra:
+subi r31,10
+add r31,r21
+rjmp enviar
+
+num:
+cpi r19,1
+breq hex4
+cpi r31,0
+hex4:
+add r31,R20
+enviar:
+mov r16,R31
+rcall SEND_CHAR
+hex5:
+cpi r19,1
+brne hex2
+
+pop r31
+pop r30
+pop r21
+pop r20
+pop r19
+pop r16
+ret
+; ---------------------------------------------------
+; PRINT_BIN (8 bits)
+; ---------------------------------------------------
+PRINT_BIN:
+mov r16, r28
+ldi r18, 8
+mov r19,r16
+loop_bin:
+rol r19 ; põe no carry o bit mais significativo
+    brcs bit1 ;se for 1, salta
+
+ldi r16,'0'
+rjmp final
+
+
+bit1:
+ldi r16, '1'
+rjmp final
+
+final:
+rcall SEND_CHAR
+DEC r18;conta o nr de bits que já enviou
+cpi r18, 0
+brne loop_bin ; se ainda não enviou todos, envia mais 1
+ret
+;----------------------------------------------------
+; CONTAGEM
+;----------------------------------------------------
+CONTAGEM:
+push R26
+push R27
+
+ldi R26, -1
+ldi R27, 0 ;Começa em zero
+
+contar:
+ldi cs, 10
+rcall delay_cs
+rcall Trocas
+inc R26
+cpi R26,255
+breq contar_high
+cpi R27,39
+breq verificar
+
+cont:
+push R26
+push R27
+rcall PRINT_HEX16
+rcall Espaco
+pop R27
+pop R26
+push R26
+push R27
+rcall PRINT_DEC16
+rcall Paragrafo
+pop r27
+pop r26
+rjmp contar
+
+contar_high:
+clr R26
+inc R27
+rjmp contar
+
+verificar:
+cpi R26,16 ;Vê se já chegou ao fim
+breq fim
+rjmp cont
+fim:
+pop R27
+pop R26
+
+ret
+; ---------------------------------------------------
+; rotina principal do programa
+; ---------------------------------------------------
+Main:
+; inicializações
+    ldi reg1, low(RAMEND)
+    out SPL, reg1
+    ldi reg1, high(RAMEND)
+    out SPH, reg1
+
+    sbi DDRB, PB0  ; PB0 output (LED)
+    sbi PORTB, PB0 ; LED off
+; ciclo infinito
+rcall R232_CONFIG
+rcall paragrafo
+rcall LER_STR
+rcall paragrafo
+Loop:
+rcall CONTAGEM
+rjmp Loop
+
+
+#####
+
+.nolist
+.include "m8def.inc"
+.list
+
+.dseg
+COUNTER:
+.db 0
+COUNTER2:
+.db 0
+
+.cseg
+.org 0
+    rjmp RESET ; Reset Handler
+
+Reset:
+    rjmp Main
+
+Elementos_Grupo:
+.db " Luis Leca & Marcelo Leite ",0, 0
+
+Erro1:
+.db " Comando invalido ",0, 0
+
+Erro2:
+.db " Deve inserir tudo em hexadecimal ",0, 0
+
+Completo:
+.db " Instrucao completa ",0, 0
+
+;###################################;
+; ;
+;  Passo 5 ;
+; ;
+;###################################;
+
+;########  ESPERAR LETRA  ##########;
+
+ESPERA_LETRA:
+
+sbis UCSRA, RXC
+rjmp ESPERA_LETRA
+
+in r16, UDR
+
+ret
+
+;########    COMANDO H    ##########;
+
+COMANDO_H:
+
+LoopH:
+
+ld r19, x+
+
+rcall PRINT_HEX
+rcall PARAGRAFO
+
+cpi r26, 0x70
+brne LoopH
+
+ldi r21, 1
+
+ret
+
+;########    COMANDO D    ##########;
+
+COMANDO_D:
+
+LoopD:
+
+ld r16, x+
+mov r19, r16
+rcall PRINT_DEC
+rcall PARAGRAFO
+
+cpi r26, 0x70
+brne LoopD
+
+ldi r21, 1
+
+ret
+
+
+;########    COMANDO W    ##########;
+
+COMANDO_W:
+
+ldi r26, $60
+
+rcall ESPERA_LETRA
+rcall CONV_HEX_TO_BIN
+mov r17, r16
+
+cpi r22, 1
+breq fim
+
+rcall ESPERA_LETRA
+rcall CONV_HEX_TO_BIN
+mov r18, r16
+
+cpi r22, 1
+breq fim
+
+rcall ESPERA_LETRA
+rcall CONV_HEX_TO_BIN
+mov r19, r16
+
+cpi r22, 1
+breq fim
+
+lsl r18
+lsl r18
+lsl r18
+lsl r18
+
+add r18, r19
+add r26, r17
+
+st x, r18
+
+ldi r21, 1
+
+fim:
+
+ret
+
+
+;########    COMANDO R    ##########;
+
+COMANDO_R:
+
+rcall ESPERA_LETRA
+rcall CONV_HEX_TO_BIN
+
+add r26, r16
+
+ld r19, x
+
+rcall PRINT_HEX
+rcall PARAGRAFO
+
+rcall PRINT_DEC
+rcall PARAGRAFO
+
+ldi r21, 1
+
+ret
+
+;###################################;
+; ;
+;  Passo 6 ;
+; ;
+;###################################;
+
+;########   CONFIG. ADC   ##########;
+
+ADC_CONFIG:
+
+ldi r16,(1<<REFS0)|(1<<ADLAR) 
+out ADMUX, r16
+
+ldi r16, (1<<ADEN)|(1<<ADPS1)|(1<<ADPS0)
+out ADCSR,r16
+
+ret
+
+;########   ENVIAR TENSÃO   ##########;
+
+
+COMANDO_V:
+
+sbi ADCSR,ADSC
+
+loopV1:
+
+sbis ADCSR,ADIF
+rjmp loopV1
+
+in r16,ADCH
+
+ldi r20, 7
+add r26, r20 
+
+st x,r16
+
+ld r1,x
+
+rcall multiplica
+rcall divide
+rcall binbcd16
+
+ldi r16,'V'
+rcall send_char
+
+rcall PARAGRAFO 
+
+ldi r21, 1
+
+ret
+
+multiplica:
+
+clr r4
+ldi r16,$01
+mov r3,r16
+ldi r16,$F6
+mov r2,r16
+clr r7
+clr r6
+clr r5
+
+multiplica_1:
+
+or r1,r1
+brne multiplica_2
+ret
+
+multiplica_2:
+
+lsr r1
+brcc multiplica_3
+add r5,r2
+adc r6,r3
+adc r7,r4
+
+multiplica_3:
+
+lsl r2
+rol r3
+rol r4
+rjmp multiplica_1
+
+divide:
+
+clr r16
+lsl r5
+adc r6,r16
+adc r7,r16
+mov r2,r7
+mov r1,r6
+ret
+
+binbcd16:
+
+mov r17,r1
+mov r18,r2
+    ldi r16, -1 + '0'
+
+milha16: 
+
+inc r16
+    subi r17, low(10000)
+    sbci r18, high(10000)
+    brcc milha16
+
+    ldi r16, 10 + '0'
+
+mil16:  
+
+dec r16
+subi r17, low(-1000)
+sbci r18, high(-1000)
+    brcs mil16
+
+ldi r16, -1+'0'
+
+cen16:
+
+inc r16
+subi r17,low(100)
+sbci r18, high(100)
+brcc cen16
+rcall send_char
+ldi r16, '.'
+rcall send_char
+ldi r16,10+'0'
+
+dez16:
+
+dec r16
+subi r17,-10
+brcs dez16
+rcall send_char
+
+uni16:
+
+subi r17,-'0'
+mov r16,r17
+rcall send_char
+ret
+
+
+;###################################################################################;
+;####################### ###########################;
+;#######################    PRINCIPIO PROGRAMA (MAIN)    ###########################;
+;####################### ###########################;
+;###################################################################################;
+
+
+Main:
+
+
+    ldi r16, low(RAMEND)
+    out SPL, r16
+    ldi r16, high(RAMEND)
+    out SPH, r16
+
+    sbi DDRB, PB0  ; PB0 output (LED)
+    sbi PORTB, PB0 ; LED off
+ldi r16, (1<<PB1)
+ldi r17, (1<<DDB1)
+
+out PORTB, r16
+out DDRB, r17
+
+sei 
+
+rcall RS232_CONFIG
+rcall ADC_CONFIG
+rcall PRINT_STR
+
+CONSOLA:
+
+ldi r26, $60
+ldi r27, $00
+
+ldi r21, 0
+
+rcall ESPERA_LETRA
+
+cpi r16, 'h'
+brne next1
+rcall COMANDO_H
+
+next1:
+cpi r16, 'd'
+brne next2
+rcall COMANDO_D
+
+next2:
+cpi r16, 'w'
+brne next3
+rcall COMANDO_W
+
+next3:
+cpi r16, 'r'
+brne next4
+rcall COMANDO_R
+
+next4:
+cpi r16, 'v'
+brne next5
+rcall COMANDO_V
+
+next5:
+cpi r21, 1
+
+breq CONSOLA
+
+rcall PRINT_STR_ERRO1
+
+rjmp CONSOLA
+
+;#####################################################################################;
+
+; CONFIG. PORTA SÉRIE ;
+
+
+RS232_CONFIG:
+
+ldi r16, 0
+ldi r17, 23 
+
+out UBRRH, r16
+out UBRRL, r17 ; Baud-rate : 38400 bit/s
+
+ldi r16, (1<<RXEN)|(1<<TXEN)
+out UCSRB, r16 ; Enable envio e recepção bits via porta série
+
+ldi r16, (1<<URSEL)|(1<<UCSZ1)|(1<<UCSZ0)
+out UCSRC, r16 ; Formato de 8 bits e 2 stop bits
+
+ret
+
+; ENVIO DE 1 CARACTER ;
+
+
+SEND_CHAR:
+
+sbis UCSRA,UDRE
+rjmp SEND_CHAR ; Testa se buffer de envio está vazio
+
+out UDR,r16 ; Envia via porta série o valor em r16
+
+ret
+
+
+;    ENVIO DE 1 STRING COM OS NOMES ;
+
+PRINT_STR:
+
+ldi r31, high(2*Elementos_Grupo)
+ldi r30, low(2*Elementos_Grupo)
+
+rcall PARAGRAFO
+
+a_enviar:
+
+lpm r16, z+ ; O apontador z corresponde aos registos r30 e r31 percorre-os
+; salvando o seu valor em r16
+
+cpi r16, 0
+breq enviado 
+
+rcall SEND_CHAR
+rjmp a_enviar
+
+enviado:
+
+rcall PARAGRAFO 
+
+ret
+
+;   IMPRIMIR DECIMAL 8 BITS ;
+
+
+
+PRINT_DEC:
+
+mov r17, r19
+ldi r16, '0'
+
+
+centenas: ; Testa digito das dezenos do registo contador (r19)
+; decrementando-o em 100 até atingir um valor menor
+; que 100. Em simultâneo incremento o r16, a partir de
+; 0 até ao valor de centenas do registo contador inicial
+
+
+cpi r17, 100
+brlo fim_centenas
+
+inc r16
+subi r17, 100
+rjmp centenas
+
+fim_centenas:
+
+rcall SEND_CHAR
+ldi r16, '0'
+
+dezenas: ; Faz o mesmo que em cima mas para as dezenas
+
+cpi r17, 10
+brlo fim_dezenas
+
+inc r16
+subi r17, 10
+rjmp dezenas
+
+fim_dezenas:
+
+rcall SEND_CHAR
+ldi r16, '0'
+
+unidades: ; Faz o mesmo que em cima mas para as unidades
+
+cpi r17, 1
+brlo fim_unidades
+
+inc r16
+subi r17, 1
+rjmp unidades
+
+fim_unidades:
+
+rcall SEND_CHAR
+ldi r16, '0'
+
+ret
+
+PRINT_HEX:
+mov r17, r19
+
+; Faz shift ao nibble menos significativo, convertendo e
+; enviando em decimal o nibble mais significativo
+lsr r17
+lsr r17
+lsr r17
+lsr r17
+
+rcall CONV_BIN_TO_HEX
+rcall SEND_CHAR
+
+mov r17, r19 ; Isola o nibble menos significativo e faz o processo
+; anterior de tradução binário to hexadecimal
+andi r17, $0F
+
+rcall CONV_BIN_TO_HEX
+rcall SEND_CHAR
+
+ret
+
+;###################################################################################;
+
+; ROTINA PARA DAR 2 ESPAÇOS ;
+
+ESPACO: 
+
+ldi r16, ' '
+rcall SEND_CHAR
+ret
+
+;###################################################################################;
+
+;     ROTINA PARA FAZER UM PARAGRAFO ;
+
+PARAGRAFO:
+
+ldi r16, 10
+rcall SEND_CHAR
+ldi r16, 13
+rcall SEND_CHAR
+ret
+
+;###################################################################################;
+
+;   ROTINA CONVERTER 4 BITS BINARIO EM HEXADECIMAL ;
+
+CONV_BIN_TO_HEX:
+
+cpi r17, 10 ; Compara com 10, se for menor é representado com um número
+; e salta para "numero" se for maior, é letra e continua a exec.
+brlo numero
+
+ldi r16, 'A'
+subi r16, 10
+add r16, r17
+ret
+
+numero:
+
+ldi r16, '0'
+add r16, r17
+
+ret
+
+;###################################################################################;
+
+;   ROTINA CONVERTER HEXADECIMAL EM BINARIO ;
+
+CONV_HEX_TO_BIN:
+
+ldi r22, 0
+
+cpi r16, 'A' 
+brlo numeroW
+
+subi r16,55
+
+cpi r16, 16
+brlo check2
+
+rcall PRINT_STR_ERRO2
+ldi r22, 1
+
+ret
+
+numeroW:
+
+subi r16, '0'
+
+cpi r16, 10
+brlo check2
+
+rcall PRINT_STR_ERRO2
+ldi r22, 1
+
+ret
+
+check2:
+
+cpi r16, 0
+brsh fim_cicloW
+
+rcall PRINT_STR_ERRO2
+ldi r22, 1
+
+ret
+
+fim_cicloW:
+
+ret
+
+
+;#####################################################################################;
+
+PRINT_STR_ERRO1:
+
+ldi r31, high(2*Erro1)
+ldi r30, low(2*Erro1)
+
+a_enviar1:
+
+lpm r16, z+ ; O apontador z corresponde aos registos r30 e r31 percorre-os
+; salvando o seu valor em r16
+
+cpi r16, 0
+breq enviado1 
+
+rcall SEND_CHAR
+rjmp a_enviar1
+
+enviado1:
+
+rcall PARAGRAFO
+
+ret
+
+
+;#####################################################################################;
+
+PRINT_STR_ERRO2:
+
+ldi r31, high(2*Erro2)
+ldi r30, low(2*Erro2)
+
+a_enviar2:
+
+lpm r16, z+ ; O apontador z corresponde aos registos r30 e r31 percorre-os
+; salvando o seu valor em r16
+
+cpi r16, 0
+breq enviado2 
+
+rcall SEND_CHAR
+rjmp a_enviar2
+
+enviado2:
+
+rcall PARAGRAFO
+
+ret
