@@ -2,11 +2,11 @@
 .include "m8def.inc"
 .list
 
-.def reg1 = R16
-.def reg2 = R17
-.def reg3 = r18
-.def reg4 = r19
-.def reg5 = r20 
+.def reg1 = R11
+.def reg2 = R12
+.def reg3 = r13
+.def reg4 = r14
+.def reg5 = r15 
 .cseg
 .org 0x0000
 
